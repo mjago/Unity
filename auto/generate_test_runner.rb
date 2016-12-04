@@ -12,10 +12,10 @@ class UnityTestRunnerGenerator
   def initialize(options = nil)
     @options = UnityTestRunnerGenerator.default_options
     case(options)
-      when NilClass then @options
-      when String   then @options.merge!(UnityTestRunnerGenerator.grab_config(options))
-      when Hash     then @options.merge!(options)
-      else          raise "If you specify arguments, it should be a filename or a hash of options"
+    when NilClass then @options
+    when String   then @options.merge!(UnityTestRunnerGenerator.grab_config(options))
+    when Hash     then @options.merge!(options)
+    else          raise "If you specify arguments, it should be a filename or a hash of options"
     end
     require "#{File.expand_path(File.dirname(__FILE__))}/type_sanitizer"
   end
@@ -55,7 +55,7 @@ class UnityTestRunnerGenerator
     @options.merge!(options) unless options.nil?
     module_name = File.basename(input_file)
 
-    #pull required data from source file
+    # pull required data from source file
     source = File.read(input_file)
     source = source.force_encoding("ISO-8859-1").encode("utf-8", :replace => nil) if ($QUICK_RUBY_VERSION > 10900)
     tests               = find_tests(source)
@@ -65,10 +65,10 @@ class UnityTestRunnerGenerator
     testfile_includes   = (testfile_includes - used_mocks)
     testfile_includes.delete_if{|inc| inc =~ /(unity|cmock)/}
 
-    #build runner file
+    # build runner file
     generate(input_file, output_file, tests, used_mocks, testfile_includes)
 
-    #determine which files were used to return them
+    # determine which files were used to return them
     all_files_used = [input_file, output_file]
     all_files_used += testfile_includes.map {|filename| filename + '.c'} unless testfile_includes.empty?
     all_files_used += @options[:includes] unless @options[:includes].empty?
@@ -76,25 +76,26 @@ class UnityTestRunnerGenerator
   end
 
   def generate(input_file, output_file, tests, used_mocks, testfile_includes)
-    File.open(output_file, 'w') do |output|
-      create_header(output, used_mocks, testfile_includes)
-      create_externs(output, tests, used_mocks)
-      create_mock_management(output, used_mocks)
-      create_suite_setup_and_teardown(output)
-      create_reset(output, used_mocks)
-      create_main(output, input_file, tests, used_mocks)
+    out = []
+    out << create_header(used_mocks, testfile_includes)
+    out << create_externs(tests, used_mocks)
+    out << create_mock_management(used_mocks)
+    out << create_suite_setup_and_teardown
+    out << create_reset(used_mocks)
+    out << create_main(input_file, tests, used_mocks)
+    File.open(output_file, 'w') do |f|
+      f.write(out.join("\n"))
     end
 
     if (@options[:header_file] && !@options[:header_file].empty?)
-      File.open(@options[:header_file], 'w') do |output|
-        create_h_file(output, @options[:header_file], tests, testfile_includes, used_mocks)
+      File.open(@options[:header_file], 'w') do |f|
+        f.write(create_h_file(@options[:header_file], tests, testfile_includes, used_mocks))
       end
     end
   end
 
   def find_tests(source)
     tests_and_line_numbers = []
-
     source_scrubbed = source.clone
     source_scrubbed = source_scrubbed.gsub(/"[^"\n]*"/, '')      # remove things in strings
     source_scrubbed = source_scrubbed.gsub(/\/\/.*$/, '')      # remove line comments
@@ -103,7 +104,7 @@ class UnityTestRunnerGenerator
                               | (;|\{|\}) /x)                  # Match ;, {, and } as end of lines
 
     lines.each_with_index do |line, index|
-      #find tests
+      # find tests
       if line =~ /^((?:\s*TEST_CASE\s*\(.*?\)\s*)*)\s*void\s+((?:#{@options[:test_prefix]}).*)\s*\(\s*(.*)\s*\)/
         arguments = $1
         name = $2
@@ -119,7 +120,7 @@ class UnityTestRunnerGenerator
     end
     tests_and_line_numbers.uniq! {|v| v[:test] }
 
-    #determine line numbers and create tests to run
+    # determine line numbers and create tests to run
     source_lines = source.split("\n")
     source_index = 0;
     tests_and_line_numbers.size.times do |i|
@@ -137,12 +138,12 @@ class UnityTestRunnerGenerator
 
   def find_includes(source)
 
-    #remove comments (block and line, in three steps to ensure correct precedence)
+    # remove comments (block and line, in three steps to ensure correct precedence)
     source.gsub!(/\/\/(?:.+\/\*|\*(?:$|[^\/])).*$/, '')  # remove line comments that comment out the start of blocks
     source.gsub!(/\/\*.*?\*\//m, '')                     # remove block comments
     source.gsub!(/\/\/.*$/, '')                          # remove line comments (all that remain)
 
-    #parse out includes
+    # parse out includes
     includes = {
       :local => source.scan(/^\s*#include\s+\"\s*(.+)\.[hH]\s*\"/).flatten,
       :system => source.scan(/^\s*#include\s+<\s*(.+)\s*>/).flatten.map { |inc| "<#{inc}>" }
@@ -159,277 +160,290 @@ class UnityTestRunnerGenerator
     return mock_headers
   end
 
-  def create_header(output, mocks, testfile_includes=[])
-    output.puts('/* AUTOGENERATED FILE. DO NOT EDIT. */')
-    create_runtest(output, mocks)
-    output.puts("\n/*=======Automagically Detected Files To Include=====*/")
-    output.puts("#include \"#{@options[:framework].to_s}.h\"")
-    output.puts('#include "cmock.h"') unless (mocks.empty?)
-    output.puts('#include <setjmp.h>')
-    output.puts('#include <stdio.h>')
-    output.puts('#include "CException.h"') if @options[:plugins].include?(:cexception)
+  def create_header(mocks, testfile_includes=[])
+    out = []
+    out << '/* AUTOGENERATED FILE. DO NOT EDIT. */'
+    out << create_runtest(mocks)
+    out << "\n/*=======Automagically Detected Files To Include=====*/"
+    out << "#include \"#{@options[:framework]}.h\""
+    out << '#include "cmock.h"' unless (mocks.empty?)
+    out << '#include <setjmp.h>'
+    out << '#include <stdio.h>'
+    out << '#include "CException.h"' if @options[:plugins].include?(:cexception)
     if (@options[:defines] && !@options[:defines].empty?)
       @options[:defines].each {|d| output.puts("#define #{d}")}
     end
     if (@options[:header_file] && !@options[:header_file].empty?)
-      output.puts("#include \"#{File.basename(@options[:header_file])}\"")
+      out << "#include \"#{File.basename(@options[:header_file])}\""
     else
       @options[:includes].flatten.uniq.compact.each do |inc|
-        output.puts("#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}")
+        out << "#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}"
       end
       testfile_includes.each do |inc|
-        output.puts("#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}")
+      out << "#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}"
       end
     end
     mocks.each do |mock|
-      output.puts("#include \"#{mock.gsub('.h','')}.h\"")
+      out << "#include \"#{mock.gsub('.h','')}.h\""
     end
     if @options[:enforce_strict_ordering]
-      output.puts('')
-      output.puts('int GlobalExpectCount;')
-      output.puts('int GlobalVerifyOrder;')
-      output.puts('char* GlobalOrderError;')
+      out << ''
+      out << 'int GlobalExpectCount;'
+      out << 'int GlobalVerifyOrder;'
+      out << 'char* GlobalOrderError;'
     end
+    out.join("\n")
   end
 
-  def create_externs(output, tests, mocks)
-    output.puts("\n/*=======External Functions This Runner Calls=====*/")
-    output.puts("extern void #{@options[:setup_name]}(void);")
-    output.puts("extern void #{@options[:teardown_name]}(void);")
+  def create_externs(tests, mocks)
+    out = []
+    out << "\n/*=======External Functions This Runner Calls=====*/"
+    out << "extern void #{@options[:setup_name]}(void);"
+    out << "extern void #{@options[:teardown_name]}(void);"
     tests.each do |test|
-      output.puts("extern void #{test[:test]}(#{test[:call] || 'void'});")
+      out << "extern void #{test[:test]}(#{test[:call] || 'void'});"
     end
-    output.puts('')
+    out.join("\n")
   end
 
-  def create_mock_management(output, mock_headers)
+  def create_mock_management(mock_headers)
+    out = []
     unless (mock_headers.empty?)
-      output.puts("\n/*=======Mock Management=====*/")
-      output.puts("static void CMock_Init(void)")
-      output.puts("{")
+      out << "\n/*=======Mock Management=====*/"
+      out << 'static void CMock_Init(void)'
+      out << '{'
       if @options[:enforce_strict_ordering]
-        output.puts("  GlobalExpectCount = 0;")
-        output.puts("  GlobalVerifyOrder = 0;")
-        output.puts("  GlobalOrderError = NULL;")
+        out << '  GlobalExpectCount = 0;'
+        out << '  GlobalVerifyOrder = 0;'
+        out << '  GlobalOrderError = NULL;'
       end
-      mocks = mock_headers.map {|mock| File.basename(mock)}
+      mocks = mock_headers.map { |mock| File.basename(mock) }
       mocks.each do |mock|
         mock_clean = TypeSanitizer.sanitize_c_identifier(mock)
-        output.puts("  #{mock_clean}_Init();")
+        out << "  #{mock_clean}_Init();"
       end
-      output.puts("}\n")
+      out << "}\n"
+      out << 'static void CMock_Verify(void)'
+      out << '{'
+      mocks.each do |mock|
+        mock_clean = TypeSanitizer.sanitize_c_identifier(mock)
+        out << "  #{mock_clean}_Verify();"
+      end
+      out << "}\n"
 
-      output.puts("static void CMock_Verify(void)")
-      output.puts("{")
+      out << "static void CMock_Destroy(void)"
+      out << '{'
       mocks.each do |mock|
         mock_clean = TypeSanitizer.sanitize_c_identifier(mock)
-        output.puts("  #{mock_clean}_Verify();")
+        out << "  #{mock_clean}_Destroy();"
       end
-      output.puts("}\n")
-
-      output.puts("static void CMock_Destroy(void)")
-      output.puts("{")
-      mocks.each do |mock|
-        mock_clean = TypeSanitizer.sanitize_c_identifier(mock)
-        output.puts("  #{mock_clean}_Destroy();")
-      end
-      output.puts("}\n")
+      out << "}\n"
     end
+    out.join("\n")
   end
 
-  def create_suite_setup_and_teardown(output)
+  def create_suite_setup_and_teardown
+    out = []
     unless (@options[:suite_setup].nil?)
-      output.puts("\n/*=======Suite Setup=====*/")
-      output.puts("static void suite_setup(void)")
-      output.puts("{")
-      output.puts(@options[:suite_setup])
-      output.puts("}")
+      out << "\n/*=======Suite Setup=====*/"
+      out << 'static void suite_setup(void)'
+      out << '{'
+      out << @options[:suite_setup]
+      out << '}'
     end
-    unless (@options[:suite_teardown].nil?)
-      output.puts("\n/*=======Suite Teardown=====*/")
-      output.puts("static int suite_teardown(int num_failures)")
-      output.puts("{")
-      output.puts(@options[:suite_teardown])
-      output.puts("}")
+    unless @options[:suite_teardown].nil?
+      out << "\n/*=======Suite Teardown=====*/"
+      out << 'static int suite_teardown(int num_failures)'
+      out << '{'
+      out << @options[:suite_teardown]
+      out << '}'
     end
+    out.join("\n")
   end
 
-  def create_runtest(output, used_mocks)
+  def create_runtest(used_mocks)
     cexception = @options[:plugins].include? :cexception
     va_args1   = @options[:use_param_tests] ? ', ...' : ''
     va_args2   = @options[:use_param_tests] ? '__VA_ARGS__' : ''
-    output.puts("\n/*=======Test Runner Used To Run Each Test Below=====*/")
-    output.puts("#define RUN_TEST_NO_ARGS") if @options[:use_param_tests]
-    output.puts("#define RUN_TEST(TestFunc, TestLineNum#{va_args1}) \\")
-    output.puts("{ \\")
-    output.puts("  Unity.CurrentTestName = #TestFunc#{va_args2.empty? ? '' : " \"(\" ##{va_args2} \")\""}; \\")
-    output.puts("  Unity.CurrentTestLineNumber = TestLineNum; \\")
-    output.puts("  if (UnityTestMatches()) { \\") if (@options[:cmdline_args])
-    output.puts("  Unity.NumberOfTests++; \\")
-    output.puts("  CMock_Init(); \\") unless (used_mocks.empty?)
-    output.puts("  UNITY_CLR_DETAILS(); \\") unless (used_mocks.empty?)
-    output.puts("  if (TEST_PROTECT()) \\")
-    output.puts("  { \\")
-    output.puts("    CEXCEPTION_T e; \\") if cexception
-    output.puts("    Try { \\") if cexception
-    output.puts("      #{@options[:setup_name]}(); \\")
-    output.puts("      TestFunc(#{va_args2}); \\")
-    output.puts("    } Catch(e) { TEST_ASSERT_EQUAL_HEX32_MESSAGE(CEXCEPTION_NONE, e, \"Unhandled Exception!\"); } \\") if cexception
-    output.puts("  } \\")
-    output.puts("  if (TEST_PROTECT() && !TEST_IS_IGNORED) \\")
-    output.puts("  { \\")
-    output.puts("    #{@options[:teardown_name]}(); \\")
-    output.puts("    CMock_Verify(); \\") unless (used_mocks.empty?)
-    output.puts("  } \\")
-    output.puts("  CMock_Destroy(); \\") unless (used_mocks.empty?)
-    output.puts("  UnityConcludeTest(); \\")
-    output.puts("  } \\")  if (@options[:cmdline_args])
-    output.puts("}\n")
+    out = []
+    out << "\n/*=======Test Runner Used To Run Each Test Below=====*/"
+    out << '#define RUN_TEST_NO_ARGS' if @options[:use_param_tests]
+    out << "#define RUN_TEST(TestFunc, TestLineNum#{va_args1}) \\"
+    out << '{ \\'
+    out << "  Unity.CurrentTestName = #TestFunc#{va_args2.empty? ? '' : " \"(\" ##{va_args2} \")\""}; \\"
+        out << '  Unity.CurrentTestLineNumber = TestLineNum; \\'
+    out << '  if (UnityTestMatches()) { \\' if (@options[:cmdline_args])
+    out << '  Unity.NumberOfTests++; \\'
+    out << '  CMock_Init(); \\' unless (used_mocks.empty?)
+    out << '  UNITY_CLR_DETAILS(); \\' unless (used_mocks.empty?)
+    out << '  if (TEST_PROTECT()) \\'
+    out << '  { \\'
+    out << '    CEXCEPTION_T e; \\' if cexception
+    out << '    Try { \\' if cexception
+    out << "      #{@options[:setup_name]}(); \\"
+    out << "      TestFunc(#{va_args2}); \\"
+    out << '    } Catch(e) { TEST_ASSERT_EQUAL_HEX32_MESSAGE(CEXCEPTION_NONE, e, "Unhandled Exception!"); } \\' if cexception
+    out << '  } \\'
+    out << '  if (TEST_PROTECT() && !TEST_IS_IGNORED) \\'
+    out << '  { \\'
+    out << "    #{@options[:teardown_name]}(); \\"
+    out << '    CMock_Verify(); \\' unless (used_mocks.empty?)
+    out << '  } \\'
+    out << '  CMock_Destroy(); \\' unless (used_mocks.empty?)
+    out << '  UnityConcludeTest(); \\'
+    out << '  } \\' if (@options[:cmdline_args])
+    out << '}'
+    out.join("\n")
   end
 
-  def create_reset(output, used_mocks)
-    output.puts("\n/*=======Test Reset Option=====*/")
-    output.puts("void resetTest(void);")
-    output.puts("void resetTest(void)")
-    output.puts("{")
-    output.puts("  CMock_Verify();") unless (used_mocks.empty?)
-    output.puts("  CMock_Destroy();") unless (used_mocks.empty?)
-    output.puts("  #{@options[:teardown_name]}();")
-    output.puts("  CMock_Init();") unless (used_mocks.empty?)
-    output.puts("  #{@options[:setup_name]}();")
-    output.puts("}")
+  def create_reset(used_mocks)
+    out = []
+    out << "/*=======Test Reset Option=====*/"
+    out << 'void resetTest(void);'
+    out << 'void resetTest(void)'
+    out << '{'
+    out << '  CMock_Verify(); ' unless used_mocks.empty?
+    out << '  CMock_Destroy();' unless used_mocks.empty?
+    out << "  #{@options[:teardown_name]}();"
+    out << '  CMock_Init();' unless used_mocks.empty?
+    out << "  #{@options[:setup_name]}();"
+    out << '}'
+    out.join("\n")
   end
 
-  def create_main(output, filename, tests, used_mocks)
-    output.puts("\n\n/*=======MAIN=====*/")
+  def create_main(filename, tests, used_mocks)
+    out = []
+    out << "\n\n/*=======MAIN=====*/"
     main_name = (@options[:main_name].to_sym == :auto) ? "main_#{filename.gsub('.c','')}" : "#{@options[:main_name]}"
     if (@options[:cmdline_args])
-      if (main_name != "main")
-        output.puts("#{@options[:main_export_decl]} int #{main_name}(int argc, char** argv);")
-      end
-      output.puts("#{@options[:main_export_decl]} int #{main_name}(int argc, char** argv)")
-      output.puts("{")
-      output.puts("  int parse_status = UnityParseOptions(argc, argv);")
-      output.puts("  if (parse_status != 0)")
-      output.puts("  {")
-      output.puts("    if (parse_status < 0)")
-      output.puts("    {")
-      output.puts("      UnityPrint(\"#{filename.gsub('.c','')}.\");")
-      output.puts("      UNITY_PRINT_EOL();")
+      out << "#{@options[:main_export_decl]} int #{main_name}(int argc, char** argv);" if (main_name != "main")
+      out << " #{@options[:main_export_decl]} int #{main_name}(int argc, char** argv)"
+      out << ' {'
+      out << '   int parse_status = UnityParseOptions(argc, argv);'
+      out << '   if (parse_status != 0)'
+      out << '   {'
+      out << '     if (parse_status < 0)'
+      out << '     {'
+      out << '       UnityPrint("' + "#{filename.gsub('.c','')}" + '.");'
+      out << '       UNITY_PRINT_EOL();'
+
       if (@options[:use_param_tests])
         tests.each do |test|
           if ((test[:args].nil?) or (test[:args].empty?))
-            output.puts("      UnityPrint(\"  #{test[:test]}(RUN_TEST_NO_ARGS)\");")
-            output.puts("      UNITY_PRINT_EOL();")
+            out << "      UnityPrint(\"  #{test[:test]}(RUN_TEST_NO_ARGS)\");"
+            out << '      UNITY_PRINT_EOL();'
           else
             test[:args].each do |args|
-              output.puts("      UnityPrint(\"  #{test[:test]}(#{args})\");")
-              output.puts("      UNITY_PRINT_EOL();")
+              out << "      UnityPrint(\"  #{test[:test]}(#{args})\");"
+              out << '      UNITY_PRINT_EOL();'
             end
           end
         end
       else
-        tests.each { |test| output.puts("      UnityPrint(\"  #{test[:test]}\");\n    UNITY_PRINT_EOL();")}
+        tests.each { |test| out << "      UnityPrint(\"  #{test[:test]}\");\n    UNITY_PRINT_EOL();" }
       end
-      output.puts("    return 0;")
-      output.puts("    }")
-      output.puts("  return parse_status;")
-      output.puts("  }")
+      out << '    return 0;'
+      out << '    }'
+      out << '  return parse_status;'
+      out << '  }'
     else
       if (main_name != "main")
-        output.puts("#{@options[:main_export_decl]} int #{main_name}(void);")
+        out << "#{@options[:main_export_decl]} int #{main_name}(void);"
       end
-      output.puts("int #{main_name}(void)")
-      output.puts("{")
+      out << "int #{main_name}(void)"
+      out << '{'
     end
-    output.puts("  suite_setup();") unless @options[:suite_setup].nil?
-    output.puts("  UnityBegin(\"#{filename.gsub(/\\/,'\\\\\\')}\");")
+    out << '  suite_setup();' unless @options[:suite_setup].nil?
+    out << "  UnityBegin(\"#{filename.gsub(/\\/,'\\\\\\')}\");"
     if (@options[:use_param_tests])
       tests.each do |test|
         if ((test[:args].nil?) or (test[:args].empty?))
-          output.puts("  RUN_TEST(#{test[:test]}, #{test[:line_number]}, RUN_TEST_NO_ARGS);")
+          out << "  RUN_TEST(#{test[:test]}, #{test[:line_number]}, RUN_TEST_NO_ARGS);"
         else
-          test[:args].each {|args| output.puts("  RUN_TEST(#{test[:test]}, #{test[:line_number]}, #{args});")}
+          test[:args].each { |args| out << "  RUN_TEST(#{test[:test]}, #{test[:line_number]}, #{args});" }
         end
       end
     else
-        tests.each { |test| output.puts("  RUN_TEST(#{test[:test]}, #{test[:line_number]});") }
+      tests.each { |test| out << "  RUN_TEST(#{test[:test]}, #{test[:line_number]});" }
     end
-    output.puts()
-    output.puts("  CMock_Guts_MemFreeFinal();") unless used_mocks.empty?
-    output.puts("  return #{@options[:suite_teardown].nil? ? "" : "suite_teardown"}(UnityEnd());")
-    output.puts("}")
+    out << ''
+    out << '  CMock_Guts_MemFreeFinal();' unless used_mocks.empty?
+    out << "  return #{@options[:suite_teardown].nil? ? "" : "suite_teardown"}(UnityEnd());"
+    out << "}\n"
+    out.join("\n")
   end
 
-  def create_h_file(output, filename, tests, testfile_includes, used_mocks)
+  def create_h_file(filename, tests, testfile_includes, used_mocks)
     filename = File.basename(filename).gsub(/[-\/\\\.\,\s]/, "_").upcase
-    output.puts("/* AUTOGENERATED FILE. DO NOT EDIT. */")
-    output.puts("#ifndef _#{filename}")
-    output.puts("#define _#{filename}\n\n")
-    output.puts("#include \"#{@options[:framework].to_s}.h\"")
-    output.puts('#include "cmock.h"') unless (used_mocks.empty?)
+    out = []
+    out << '/* AUTOGENERATED FILE. DO NOT EDIT. */'
+    out << "#ifndef _#{filename}"
+    out << "#define _#{filename}\n\n"
+    out << "#include \"#{@options[:framework]}.h\""
+    out << '#include "cmock.h"' unless used_mocks.empty?
     @options[:includes].flatten.uniq.compact.each do |inc|
-      output.puts("#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}")
+      out << "#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}"
     end
     testfile_includes.each do |inc|
-      output.puts("#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}")
+    out << "#include #{inc.include?('<') ? inc : "\"#{inc.gsub('.h','')}.h\""}"
     end
-    output.puts "\n"
+    out << ''
     tests.each do |test|
-      if ((test[:params].nil?) or (test[:params].empty?))
-        output.puts("void #{test[:test]}(void);")
+      if((test[:params].nil?) or (test[:params].empty?))
+        out << "void #{test[:test]}(void);"
       else
-        output.puts("void #{test[:test]}(#{test[:params]});")
+        out << "void #{test[:test]}(#{test[:params]});"
       end
     end
-    output.puts("#endif\n\n")
+    out << "#endif\n\n"
+    out.join("\n")
   end
 end
 
 if ($0 == __FILE__)
   options = { :includes => [] }
-  yaml_file = nil
 
-  #parse out all the options first (these will all be removed as we go)
+  # parse out all the options first (these will all be removed as we go)
   ARGV.reject! do |arg|
     case(arg)
-      when '-cexception'
-        options[:plugins] = [:cexception]; true
-      when /\.*\.ya?ml/
-        options = UnityTestRunnerGenerator.grab_config(arg); true
-      when /--(\w+)=\"?(.*)\"?/
-        options[$1.to_sym] = $2; true
-      when /\.*\.h/
-        options[:includes] << arg; true
-      else false
+    when '-cexception'
+      options[:plugins] = [:cexception]; true
+    when /\.*\.ya?ml/
+      options = UnityTestRunnerGenerator.grab_config(arg); true
+    when /--(\w+)=\"?(.*)\"?/
+      options[$1.to_sym] = $2; true
+    when /\.*\.h/
+      options[:includes] << arg; true
+    else false
     end
   end
 
-  #make sure there is at least one parameter left (the input file)
-  if !ARGV[0]
-    puts ["\nusage: ruby #{__FILE__} (files) (options) input_test_file (output)",
-           "\n  input_test_file         - this is the C file you want to create a runner for",
-           "  output                  - this is the name of the runner file to generate",
-           "                            defaults to (input_test_file)_Runner",
-           "  files:",
-           "    *.yml / *.yaml        - loads configuration from here in :unity or :cmock",
-           "    *.h                   - header files are added as #includes in runner",
-           "  options:",
-           "    -cexception           - include cexception support",
-           "    --setup_name=\"\"       - redefine setUp func name to something else",
-           "    --teardown_name=\"\"    - redefine tearDown func name to something else",
-           "    --main_name=\"\"        - redefine main func name to something else",
-           "    --test_prefix=\"\"      - redefine test prefix from default test|spec|should",
-           "    --suite_setup=\"\"      - code to execute for setup of entire suite",
-           "    --suite_teardown=\"\"   - code to execute for teardown of entire suite",
-           "    --use_param_tests=1   - enable parameterized tests (disabled by default)",
-           "    --header_file=\"\"      - path/name of test header file to generate too"
-          ].join("\n")
-    exit 1
-  end
+  HelpText = %Q(
+usage: ruby #{__FILE__} (files) (options) input_test_file (output)
 
-  #create the default test runner name if not specified
-  ARGV[1] = ARGV[0].gsub(".c","_Runner.c") if (!ARGV[1])
+  input_test_file         - this is the C file you want to create a runner for
+  output                  - this is the name of the runner file to generate
+                            defaults to (input_test_file)_Runner
+  files:
+    *.yml / *.yaml        - loads configuration from here in :unity or :cmock
+    *.h                   - header files are added as #includes in runner
+  options:
+    -cexception           - include cexception support
+    --setup_name=""       - redefine setUp func name to something else
+    --teardown_name=""    - redefine tearDown func name to something else
+    --main_name=""        - redefine main func name to something else
+    --test_prefix=""      - redefine test prefix from default test|spec|should
+    --suite_setup=""      - code to execute for setup of entire suite
+    --suite_teardown=""   - code to execute for teardown of entire suite
+    --use_param_tests=1   - enable parameterized tests (disabled by default)
+    --header_file=""      - path/name of test header file to generate too)
+
+  # make sure there is at least one parameter left (the input file)
+  puts HelpText unless ARGV[0]
+  exit(1) unless ARGV[0]
+
+  # create the default test runner name if not specified
+  ARGV[1] = ARGV[0].gsub('.c','_Runner.c') unless ARGV[1]
 
   UnityTestRunnerGenerator.new(options).run(ARGV[0], ARGV[1])
 end
